@@ -15,6 +15,16 @@ pub fn transport(
         || detail.contains("resolveerror");
     let status = error.status().map(|s| s.as_u16());
     tracing::error!(provider,operation,timeout,dns,http_status=status,error=?error.without_url(),"upstream request failed");
+    if provider == "Ollama" {
+        return ApiError::new(
+            if timeout { 504 } else { 502 },
+            if timeout {
+                "Ollama: превышено время ожидания. Проверьте доступную память, выберите меньшую OLLAMA_MODEL или увеличьте OLLAMA_TIMEOUT_SECS (до 210)."
+            } else {
+                "Ollama недоступна. Запустите ollama serve или стек scripts/compose.sh ollama; проверьте OLLAMA_BASE_URL. Из контейнера localhost указывает на сам engine."
+            },
+        );
+    }
     if timeout {
         return ApiError::new(
             504,
@@ -69,11 +79,28 @@ pub async fn check(client: &reqwest::Client) -> bool {
     let photon =
         std::env::var("GEOCODER_URL").unwrap_or_else(|_| "https://photon.komoot.io/api/".into());
     let mut success = true;
-    for (provider, url) in [
-        ("Auth", format!("{}/health", auth.trim_end_matches('/'))),
-        ("Gemini", format!("{}/models", gemini.trim_end_matches('/'))),
-        ("Photon", photon),
-    ] {
+    let llm = match crate::llm::provider() {
+        Ok(provider) => provider,
+        Err(error) => {
+            println!("Configuration: {}", error.1);
+            return false;
+        }
+    };
+    let mut targets = vec![("Auth", format!("{}/health", auth.trim_end_matches('/')))];
+    if llm == crate::llm::Provider::Ollama {
+        targets.push(("Ollama", format!("{}/api/tags", crate::ollama::base_url())));
+    }
+    if std::env::var("DEMO_PLACES").as_deref() != Ok("true") {
+        if llm == crate::llm::Provider::Gemini
+            || std::env::var("PLACES_PROVIDER").unwrap_or_else(|_| "gemini".into()) == "gemini"
+        {
+            targets.push(("Gemini", format!("{}/models", gemini.trim_end_matches('/'))));
+        }
+        targets.push(("Photon", photon));
+    } else if llm == crate::llm::Provider::Gemini {
+        targets.push(("Gemini", format!("{}/models", gemini.trim_end_matches('/'))));
+    }
+    for (provider, url) in targets {
         let start = Instant::now();
         let mut request = client
             .get(url)
@@ -87,7 +114,7 @@ pub async fn check(client: &reqwest::Client) -> bool {
                 let status = response.status();
                 // Gemini is deliberately queried without a key. 400/401/403/429 prove HTTP connectivity, not generation access.
                 let ok = match provider {
-                    "Auth" | "Photon" => status.is_success(),
+                    "Auth" | "Photon" | "Ollama" => status.is_success(),
                     _ => status.is_success() || matches!(status.as_u16(), 400 | 401 | 403 | 429),
                 };
                 println!(
@@ -103,8 +130,11 @@ pub async fn check(client: &reqwest::Client) -> bool {
                 if !ok {
                     success = false;
                 }
-                if provider == "Photon" && ok && response.json::<Value>().await.is_err() {
-                    println!("Photon: response is not JSON");
+                if matches!(provider, "Photon" | "Ollama")
+                    && ok
+                    && response.json::<Value>().await.is_err()
+                {
+                    println!("{provider}: response is not JSON");
                     success = false;
                 }
             }

@@ -3,7 +3,9 @@ mod dialogue;
 mod error;
 mod gemini;
 mod geocoding;
+mod llm;
 mod model;
+mod ollama;
 mod providers;
 mod ranking;
 #[cfg(test)]

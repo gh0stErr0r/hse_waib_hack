@@ -388,6 +388,162 @@ fn gemini_function_call_normalizes_both_api_versions() {
         crate::gemini::function_args(&b)
     );
 }
+
+#[test]
+fn ollama_rejects_incomplete_and_non_object_preferences() {
+    use crate::ollama::parse_response;
+    use serde_json::json;
+    for response in [
+        json!({"done":false,"message":{"content":"{}"}}),
+        json!({"done":true,"done_reason":"length","message":{"content":"{}"}}),
+        json!({"done":true,"message":{"content":"[]"}}),
+        json!({"done":true,"message":{"content":"not-json-private-provider-payload"}}),
+        json!({"done":true,"message":{"thinking":"{}"}}),
+    ] {
+        let error = parse_response(&response).unwrap_err();
+        assert_eq!(error.0, axum::http::StatusCode::BAD_GATEWAY);
+        assert!(!error.1.contains("private-provider-payload"));
+    }
+    assert_eq!(
+        parse_response(&json!({"done":true,"done_reason":"stop","message":{"content":"{}"}}))
+            .unwrap(),
+        json!({})
+    );
+}
+
+#[tokio::test]
+async fn ollama_chat_extracts_preferences_and_keeps_unspecified_fields() {
+    use axum::{Json, Router, routing::post};
+    use serde_json::{Value, json};
+    let mock = Router::new().route("/api/chat", post(|Json(body): Json<Value>| async move {
+        assert_eq!(body["model"], "qwen3:4b");
+        assert_eq!(body["stream"], false);
+        assert_eq!(body["think"], false);
+        assert_eq!(body["format"], crate::providers::query_places_schema()["parameters"]);
+        assert_eq!(body["messages"][0]["role"], "system");
+        assert!(body["messages"][0]["content"].as_str().unwrap().contains("JSON"));
+        assert_eq!(body["messages"][1]["content"], "Любая кухня, без ограничения бюджета");
+        Json(json!({"done":true,"done_reason":"stop","message":{"role":"assistant","content":"{\"cuisines\":[],\"max_price_rub\":0}"}}))
+    }));
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let server = tokio::spawn(async move { axum::serve(listener, mock).await.unwrap() });
+    let mut profile = crate::dialogue::Profile::default();
+    profile
+        .merge(json!({"location":"Москва","cuisines":["японская"],"max_price_rub":1500}))
+        .unwrap();
+    let result = crate::ollama::request(
+        &reqwest::Client::new(),
+        &format!("http://{address}/"),
+        "qwen3:4b",
+        2,
+        "Extract preferences",
+        "Любая кухня, без ограничения бюджета",
+        crate::providers::query_places_schema()["parameters"].clone(),
+    )
+    .await
+    .unwrap();
+    profile.merge(result).unwrap();
+    assert_eq!(profile.location.as_deref(), Some("Москва"));
+    assert_eq!(profile.cuisines, Some(vec![]));
+    assert_eq!(profile.max_price_rub, Some(0));
+    server.abort();
+}
+
+#[tokio::test]
+async fn ollama_http_errors_do_not_require_json_or_expose_provider_payloads() {
+    use axum::{Router, http::StatusCode, routing::post};
+    use serde_json::json;
+    let mock = Router::new()
+        .route(
+            "/missing/api/chat",
+            post(|| async { (StatusCode::NOT_FOUND, "private-provider-payload") }),
+        )
+        .route(
+            "/failed/api/chat",
+            post(|| async {
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "<html>private-provider-payload</html>",
+                )
+            }),
+        );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let server = tokio::spawn(async move { axum::serve(listener, mock).await.unwrap() });
+    for (path, expected, message) in [
+        ("missing", StatusCode::SERVICE_UNAVAILABLE, "ollama pull"),
+        ("failed", StatusCode::BAD_GATEWAY, "HTTP 500"),
+    ] {
+        let error = crate::ollama::request(
+            &reqwest::Client::new(),
+            &format!("http://{address}/{path}"),
+            "qwen3:4b",
+            2,
+            "Extract",
+            "Message",
+            json!({"type":"object"}),
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(error.0, expected);
+        assert!(error.1.contains(message));
+        assert!(!error.1.contains("private-provider-payload"));
+    }
+    server.abort();
+}
+
+#[tokio::test]
+#[ignore = "run with LLM_PROVIDER=ollama OLLAMA_BASE_URL=http://127.0.0.1:18889 DEMO_PLACES=true; no Gemini/Yandex credentials needed"]
+async fn ollama_dialogue_pipeline_with_mock_provider() {
+    use axum::{Json, Router, routing::post};
+    use serde_json::{Value, json};
+    assert_eq!(std::env::var("LLM_PROVIDER").unwrap(), "ollama");
+    assert_eq!(
+        std::env::var("OLLAMA_BASE_URL").unwrap(),
+        "http://127.0.0.1:18889"
+    );
+    assert_eq!(std::env::var("DEMO_PLACES").unwrap(), "true");
+    let mock = Router::new().route("/api/chat", post(|Json(body): Json<Value>| async move {
+        let context: Value = serde_json::from_str(body["messages"][1]["content"].as_str().unwrap()).unwrap();
+        assert_eq!(context["recent_messages"].as_array().unwrap().len(), 20);
+        assert!(context["now_utc"].is_string());
+        assert_eq!(context["current_profile"]["location"], "Москва");
+        assert_eq!(context["user_message"], "Любая кухня, до 1500, завтра на обед без программы");
+        let preferences = json!({"cuisines":[],"max_price_rub":1500,"requires_event":false,"slots":[{"id":"lunch","label":"Обед","start":"2026-11-01T13:00:00+03:00","end":"2026-11-01T15:00:00+03:00","timezone":"Europe/Moscow"}]});
+        Json(json!({"done":true,"message":{"content":preferences.to_string()}}))
+    }));
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:18889")
+        .await
+        .unwrap();
+    let server = tokio::spawn(async move { axum::serve(listener, mock).await.unwrap() });
+    let client = reqwest::Client::new();
+    let mut profile = crate::dialogue::Profile::default();
+    profile.merge(json!({"location":"Москва"})).unwrap();
+    let messages = (0..25)
+        .map(|_| json!({"type":"user","text":"Москва"}))
+        .collect::<Vec<_>>();
+    let parsed = crate::providers::extract(
+        &client,
+        &profile,
+        &messages,
+        "Любая кухня, до 1500, завтра на обед без программы",
+    )
+    .await
+    .unwrap();
+    profile.merge(parsed).unwrap();
+    let response = crate::dialogue::answer(&client, &profile).await.unwrap();
+    let cards = response["slots"][0]["cards"].as_array().unwrap();
+    assert_eq!(cards.len(), 4);
+    assert!(cards.iter().all(|card| card["place"]["demo"] == true));
+    assert!(
+        cards
+            .iter()
+            .all(|card| card["breakdown"]["load_estimated"] == true)
+    );
+    server.abort();
+}
+
 #[test]
 fn google_citations_support_unicode_and_do_not_accept_uncited_text() {
     use serde_json::json;

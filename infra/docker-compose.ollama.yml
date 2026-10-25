@@ -1,0 +1,34 @@
+# Add with scripts/compose.sh ollama. Venue data remains controlled by DEMO_PLACES/PLACES_PROVIDER.
+services:
+  ollama:
+    image: ${OLLAMA_IMAGE:-ollama/ollama:latest}
+    environment:
+      OLLAMA_HOST: 0.0.0.0:11434
+    ports:
+      - "127.0.0.1:${OLLAMA_PORT:-11434}:11434"
+    volumes:
+      - ollama_models:/root/.ollama
+    healthcheck:
+      test: [CMD, ollama, list]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+      start_period: 10s
+    restart: unless-stopped
+  ollama-pull:
+    image: ${OLLAMA_IMAGE:-ollama/ollama:latest}
+    environment:
+      OLLAMA_HOST: http://ollama:11434
+    entrypoint: [/bin/ollama]
+    command: [pull, "${OLLAMA_MODEL:-qwen3:4b}"]
+    depends_on:
+      ollama: { condition: service_healthy }
+    restart: "no"
+  engine:
+    environment:
+      LLM_PROVIDER: ollama
+      OLLAMA_BASE_URL: http://ollama:11434
+    depends_on:
+      ollama-pull: { condition: service_completed_successfully }
+volumes:
+  ollama_models:

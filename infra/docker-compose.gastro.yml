@@ -56,6 +56,10 @@ services:
     environment:
       DATABASE_URL: postgres://gastro:${POSTGRES_PASSWORD}@postgres/users
       AUTH_URL: http://auth:8080
+      LLM_PROVIDER: ${LLM_PROVIDER:-gemini}
+      OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://host.docker.internal:11434}
+      OLLAMA_MODEL: ${OLLAMA_MODEL:-qwen3:4b}
+      OLLAMA_TIMEOUT_SECS: ${OLLAMA_TIMEOUT_SECS:-180}
       GEMINI_API_KEY: ${GEMINI_API_KEY:-}
       GEMINI_MODEL: ${GEMINI_MODEL:-gemini-3.8-flash}
       GEMINI_API_MODE: ${GEMINI_API_MODE:-interactions}
@@ -67,6 +71,8 @@ services:
       DEMO_PLACES: ${DEMO_PLACES:-false}
       PLACE_ENRICHMENT_URL: ${PLACE_ENRICHMENT_URL:-}
       PLACE_ENRICHMENT_TOKEN: ${PLACE_ENRICHMENT_TOKEN:-}
+    extra_hosts:
+      - host.docker.internal:host-gateway
     depends_on:
       postgres: { condition: service_healthy }
       auth: { condition: service_started }

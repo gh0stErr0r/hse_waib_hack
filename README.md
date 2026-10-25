@@ -17,7 +17,7 @@
 
 ## Запуск полного приложения
 
-Нужны Docker Engine, Docker Compose v2 и доступный с сервера Gemini API. Для скрипта настройки нужен Node.js 20 или новее. Rust, Elixir и PostgreSQL локально устанавливать не требуется.
+Нужны Docker Engine, Docker Compose v2 и доступный с сервера Gemini API либо [локальная Ollama](#локальный-qwen-через-ollama). Для скрипта настройки нужен Node.js 20 или новее. Rust, Elixir и PostgreSQL локально устанавливать не требуется.
 
 Все команды выполняются из корня репозитория.
 
@@ -41,6 +41,7 @@ node scripts/setup-gastro.mjs
 
 | Переменная                   | Назначение                                                                 |
 | ---------------------------- | -------------------------------------------------------------------------- |
+| `LLM_PROVIDER`               | Разбор сообщений: `gemini` (по умолчанию) или `ollama`                      |
 | `GEMINI_API_KEY`             | Ключ Gemini, имеющий доступ к выбранной модели и Google Search             |
 | `GEMINI_MODEL`               | Модель; по умолчанию `gemini-3.8-flash`                                    |
 | `GEMINI_API_MODE`            | По умолчанию `interactions`; `generate_content` оставлен для совместимости |
@@ -68,6 +69,45 @@ bash scripts/compose.sh app logs --tail=100 notif
 ```
 
 Пример сообщения в чате: «Завтра хочу японскую кухню в центре Москвы с 13:00 до 15:00, чек до 1500 рублей на человека, без программы».
+
+## Локальный Qwen через Ollama
+
+Для запуска без ключей Gemini и Яндекса:
+
+```bash
+node scripts/setup-gastro.mjs
+DEMO_PLACES=true bash scripts/compose.sh ollama up --build -d
+```
+
+Интерфейс: [http://localhost:8088](http://localhost:8088). Работают обычные аккаунты, история и диалог с локальной моделью. Заведения при `DEMO_PLACES=true` синтетические и помечены «Демо». Геокодер и Gemini в этом режиме не вызываются. Если SMTP не настроен, код подтверждения можно посмотреть командой `bash scripts/compose.sh ollama logs --tail=100 notif`.
+
+Compose запускает Ollama, автоматически скачивает `qwen3:4b` и только затем запускает engine. Первый запуск требует интернета для образов и весов модели; веса занимают несколько гигабайт и сохраняются в Docker volume `ollama_models`. Обычный `down` их не удаляет. Прогресс загрузки: `bash scripts/compose.sh ollama logs -f ollama-pull`.
+
+Чтобы сохранить режим для следующих запусков, задайте `DEMO_PLACES=true` в `infra/.env`. Модель меняется через `OLLAMA_MODEL`, например `qwen3:8b` при достаточной памяти; после изменения повторите `up --build -d`. По умолчанию используется CPU. Для NVIDIA с установленным NVIDIA Container Toolkit задайте `OLLAMA_GPU=true` в `infra/.env`: скрипт подключит GPU к Ollama. На Mac для ускорения используйте Ollama на хосте, как описано ниже.
+
+Локальная модель разбирает предпочтения, а источник заведений задаётся отдельно. Для настоящего поиска установите `DEMO_PLACES=false`: `PLACES_PROVIDER=gemini` использует существующий Google Search и требует `GEMINI_API_KEY`; `PLACES_PROVIDER=yandex` использует `YANDEX_SEARCH_KEY` и `YANDEX_GEOCODER_KEY`. Неподтверждённые кухня, часы и цены по-прежнему не выдумываются, поэтому без достаточных данных подборка может быть пустой. У Ollama нет встроенного инструмента Google Search.
+
+Если Ollama уже установлена на компьютере, отдельный контейнер не нужен. Запустите сервер Ollama и скачайте модель:
+
+```bash
+ollama pull qwen3:4b
+```
+
+В `infra/.env` задайте:
+
+```dotenv
+LLM_PROVIDER=ollama
+OLLAMA_BASE_URL=http://host.docker.internal:11434
+OLLAMA_MODEL=qwen3:4b
+OLLAMA_TIMEOUT_SECS=180
+DEMO_PLACES=true
+```
+
+Затем выполните `bash scripts/compose.sh app up --build -d`. На Linux Ollama должна слушать интерфейс, доступный контейнерам: для ручного запуска используйте `OLLAMA_HOST=0.0.0.0:11434 ollama serve`; для системной службы настройте эту переменную в её окружении и перезапустите службу. Для engine, запущенного вне Docker, используйте `OLLAMA_BASE_URL=http://localhost:11434`. Адрес задаётся без `/api` и `/v1`. Если порт 11434 уже занят Ollama на хосте, для контейнерного варианта можно задать `OLLAMA_PORT=11435`.
+
+При недоступной Ollama, отсутствующей модели и нехватке времени API возвращает отдельные понятные ошибки. Лимит генерации по умолчанию 180 секунд, `OLLAMA_TIMEOUT_SECS` допускает 1–210 секунд. Проверка без генерации: `bash scripts/compose.sh ollama exec -T engine gastro-engine --check-upstreams`; при локальной модели с демоданными проверяются только Auth и Ollama.
+
+Адаптер использует [Ollama Chat API](https://docs.ollama.com/api/chat), [ответы по JSON-схеме](https://docs.ollama.com/capabilities/structured-outputs) и модель [Qwen3 4B](https://ollama.com/library/qwen3:4b).
 
 ## Если Gmail SMTP зависает в Docker
 

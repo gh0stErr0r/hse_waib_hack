@@ -23,7 +23,7 @@ env_flag_enabled() {
 }
 
 stack=app
-if [[ "${1:-}" == presentation || "${1:-}" == app ]]; then
+if [[ "${1:-}" == presentation || "${1:-}" == app || "${1:-}" == ollama ]]; then
   stack="$1"
   shift
 fi
@@ -47,6 +47,12 @@ else
     exit 1
   fi
   options=(--env-file infra/.env -f infra/docker-compose.gastro.yml)
+  if [[ "$stack" == ollama ]]; then
+    options+=(-f infra/docker-compose.ollama.yml)
+    if env_flag_enabled OLLAMA_GPU; then
+      options+=(-f infra/docker-compose.ollama-gpu.yml)
+    fi
+  fi
   if env_flag_enabled SMTP_HOST_NETWORK; then
     options+=(-f infra/docker-compose.smtp-host.yml)
   fi
