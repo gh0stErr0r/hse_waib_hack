@@ -92,6 +92,26 @@ bash scripts/compose.sh app exec -T notif ./notif --check-smtp
 
 Проверка не отправляет письмо и не выводит пароль. SMTP-соединение имеет ограничение времени; ошибки указывают этап: соединение, приветствие, TLS, авторизация или принятие письма. Успех означает принятие сообщения SMTP-сервером, а не гарантию попадания во входящие. Закрытие соединения после успешного принятия сообщения не считается ошибкой отправки.
 
+## Если сборка gateway зависает на установке Hex
+
+Ошибка `mix local.hex` при загрузке `builds.hex.pm/installs/hex.csv` означает сетевой таймаут установщика. Dockerfile gateway скачивает закреплённые исходники Hex 2.6.0 и Rebar 3.25.1 с официального GitHub: загрузка выполняется через curl с повторами и проверкой SHA-512, а успешные загрузки сохраняются в кеше BuildKit. Hex компилируется внутри образа тем же Elixir/OTP, что и gateway, чтобы избежать несовместимости готовых BEAM-архивов с обновлениями OTP. Для зависимостей установлен таймаут 180 секунд и параллелизм 2, предусмотрены повторные попытки.
+
+После обновления исходников пересоберите только gateway:
+
+```bash
+bash scripts/compose.sh app build gateway
+bash scripts/compose.sh app up -d --no-deps gateway
+```
+
+Если используете Docker Compose напрямую:
+
+```bash
+docker compose --env-file infra/.env -f infra/docker-compose.gastro.yml build gateway
+docker compose --env-file infra/.env -f infra/docker-compose.gastro.yml up -d --no-deps gateway
+```
+
+При первой сборке нужен доступ к `repo.hex.pm` и GitHub. TLS-проверка и контрольные суммы включены. Для доверенного зеркала того же архива можно передать `--build-arg HEX_SOURCE_URL=...` или `--build-arg REBAR3_ARCHIVE_URL=...`; контрольная сумма остаётся обязательной. На macOS используйте обычные `SMTP_HOST_NETWORK=false` и `SMTP_NETWORK=tcp`; отдельный SMTP-обход через host network выше предназначен для нашего Linux-окружения.
+
 ## Если Gemini не отвечает
 
 Ошибки провайдера отображаются в чате с причиной:
