@@ -82,11 +82,6 @@ services:
     build:
       context: ../frontend
       target: production
-      args:
-        VITE_MAP_ATTRIBUTION: ${VITE_MAP_ATTRIBUTION:-}
-        VITE_MAP_PROVIDER: ${VITE_MAP_PROVIDER:-osm}
-        VITE_MAP_TILES_URL: ${VITE_MAP_TILES_URL:-https://tile.openstreetmap.org/{z}/{x}/{y}.png}
-        VITE_YANDEX_MAPS_KEY: ${VITE_YANDEX_MAPS_KEY:-}
     ports: ["127.0.0.1:8088:80"]
     depends_on: [gateway, auth]
     restart: unless-stopped

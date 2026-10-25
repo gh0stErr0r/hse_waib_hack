@@ -1,12 +1,8 @@
 <script setup>
-import { computed, ref, onBeforeUnmount, nextTick, watch } from "vue";
+import { ref, onBeforeUnmount, nextTick, watch } from "vue";
 import { useChatStore } from "./stores/chat";
 import PlaceCard from "./components/PlaceCard.vue";
-import YandexMap from "./components/YandexMap.vue";
-import LeafletMap from "./components/LeafletMap.vue";
 import SearchSources from "./components/SearchSources.vue";
-const useYandexMap = import.meta.env.VITE_MAP_PROVIDER === "yandex";
-import PresentationMap from "./components/PresentationMap.vue";
 const chat = useChatStore(),
   text = ref(""),
   email = ref(""),
@@ -20,15 +16,6 @@ const chat = useChatStore(),
   pendingToken = ref(""),
   feed = ref(null);
 const colors = ["#d79921", "#689d6a", "#d65d0e", "#b16286", "#458588"];
-const color = computed(
-  () =>
-    colors[
-      Math.max(
-        0,
-        chat.slots.findIndex((s) => s.slot.id === chat.selectedSlot),
-      ) % colors.length
-    ],
-);
 async function auth() {
   authBusy.value = true;
   authError.value = "";
@@ -419,23 +406,6 @@ onBeforeUnmount(() => chat.disconnect());
             >
           </button>
         </div>
-        <PresentationMap
-          v-if="chat.isPresentation"
-          :cards="chat.cards"
-          :color="color"
-        />
-        <YandexMap
-          v-else-if="useYandexMap"
-          :cards="chat.cards"
-          :center="chat.selectedResult?.slot.criteria.center"
-          :color="color"
-        />
-        <LeafletMap
-          v-else
-          :cards="chat.cards"
-          :center="chat.selectedResult?.slot.criteria.center"
-          :color="color"
-        />
         <div v-if="!chat.slots.length" class="empty-results">
           <span>01 / Время для открытий</span>
           <p>Здесь появятся места, которые подходят вашим планам.</p>

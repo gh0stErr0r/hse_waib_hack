@@ -1,7 +1,7 @@
 # Архитектура и контракты
 
 ```text
-Vue / Pinia / Leaflet + OpenStreetMap
+Vue / Pinia
   | same-origin HTTP(S), WebSocket
 Nginx
   | /api/auth/* -> Go Auth -> Redis session revocation
@@ -14,14 +14,14 @@ Nginx
   |                    | Gemini function calling: preferences
   |                    | Gemini Google Search: cited venue research
   |                    | Gemini JSON schema: constrained extraction
-  |                    | Photon / OpenStreetMap: address coordinates
+  |                    | Photon: address coordinates
 ```
 
 ## Полный стек
 
 `infra/docker-compose.gastro.yml`, переменные в `infra/.env`, шаблон `infra/.env.example`. Запуск: `bash scripts/compose.sh app up --build -d`. Наружу опубликован только Nginx на `127.0.0.1:8088`.
 
-Vue 3, Composition API, Pinia и Tailwind управляют чатом, историей, темами gruvbox/paper, карточками и выбранным слотом. По умолчанию используется Leaflet с тайлами OpenStreetMap, без API-ключа. Метки создаются только для карточек текущего слота; маршрутов и полилиний нет. Popup строится через DOM textContent. Атрибуция карты видна, политика Referer разрешает обращения к тайлам.
+Vue 3, Composition API, Pinia и Tailwind управляют чатом, историей, темами gruvbox/paper, карточками и выбранным слотом. Карта в интерфейсе не отображается и браузер не загружает картографические тайлы.
 
 ## Поиск с привязкой к источникам
 
@@ -46,9 +46,9 @@ Vue 3, Composition API, Pinia и Tailwind управляют чатом, ист�
 
 `GEOCODER_URL` по умолчанию `https://photon.komoot.io/api/`. Используется только поиск конкретного пользовательского запроса и небольшого списка адресов. User-Agent идентифицирует приложение; общий для процесса кеш содержит до 2048 результатов на 24 часа, доступ к публичному endpoint последовательный с интервалом не менее 1.1 секунды. На HTTP-вызов отведено 8 секунд. Публичный Photon имеет ограничения на разумную нагрузку и не даёт SLA: [политика сервера](https://github.com/komoot/photon#demo-server). Для нескольких реплик или большой нагрузки требуется собственный экземпляр/другой поставщик, публичный лимит не распределён между процессами.
 
-Leaflet загружает тайлы `https://tile.openstreetmap.org/{z}/{x}/{y}.png` в браузере. Сохраняются атрибуция, обычное браузерное кеширование и Referer; bulk download и offline prefetch отсутствуют. Поставщик меняется через `VITE_MAP_TILES_URL`, атрибуция в компоненте поддерживает `VITE_MAP_ATTRIBUTION`. Соблюдать [политику тайлов](https://operations.osmfoundation.org/policies/tiles/).
+Интерфейс не загружает карту или тайлы. Photon остаётся серверным геокодером и нужен для получения координат адресов, чтобы применять фильтр радиуса.
 
-Старые адаптеры Яндекса сохранены опционально: `PLACES_PROVIDER=yandex` и `VITE_MAP_PROVIDER=yandex` требуют соответствующих ключей. Обогащение `PLACE_ENRICHMENT_URL` относится к этому legacy-провайдеру и не требуется новому поиску. Yandex Search передаёт ID организаций в доверенный endpoint, который может вернуть дополнения по `PlaceCandidate`; неизвестные поля не угадываются.
+Старый адаптер поиска Яндекса сохранён опционально: `PLACES_PROVIDER=yandex` требует серверного ключа. Обогащение `PLACE_ENRICHMENT_URL` относится к этому legacy-провайдеру и не требуется новому поиску. Yandex Search передаёт ID организаций в доверенный endpoint, который может вернуть дополнения по `PlaceCandidate`; неизвестные поля не угадываются.
 
 ## Авторизация
 
@@ -104,7 +104,7 @@ Connect timeout 5 секунд; Google Search до 70 секунд, осталь
 
 ## Презентационный режим
 
-`infra/docker-compose.presentation.yml` запускает только frontend на `8090`. Готовые фикстуры находятся в `frontend/src/presentation/plan.js`, карта — локальная SVG-схема. Авторизация, Gemini, геосервисы и WebSocket не вызываются. Запросы к backend не обходят авторизацию: они вообще не выполняются. Данные явно демонстрационные, история в памяти, перезагрузка возвращает исходный сценарий. Презентация доступна также через `npm run demo`, кнопку в интерфейсе или `?demo=1`.
+`infra/docker-compose.presentation.yml` запускает только frontend на `8090`. Готовые фикстуры находятся в `frontend/src/presentation/plan.js`. Авторизация, Gemini, геосервисы и WebSocket не вызываются. Запросы к backend не обходят авторизацию: они вообще не выполняются. Данные явно демонстрационные, история в памяти, перезагрузка возвращает исходный сценарий. Презентация доступна также через `npm run demo`, кнопку в интерфейсе или `?demo=1`.
 
 
 ## Восстановление SMTP для этого окружения
