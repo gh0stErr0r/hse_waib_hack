@@ -1,0 +1,11 @@
+name: gastro-presentation
+services:
+  frontend:
+    build:
+      context: ../frontend
+      target: presentation
+      args:
+        VITE_PRESENTATION_MODE: "true"
+        VITE_APPLICATION_URL: ${VITE_APPLICATION_URL:-}
+    ports: ["127.0.0.1:8090:80"]
+    restart: unless-stopped

@@ -1,0 +1,58 @@
+{
+  "slots": [
+    {
+      "id": "lunch",
+      "label": "Обед",
+      "start": "2026-11-01T13:00:00+03:00",
+      "end": "2026-11-01T15:00:00+03:00",
+      "timezone": "Europe/Moscow",
+      "requires_event": false,
+      "interests": [],
+      "criteria": {
+        "center": {
+          "lat": 55.75,
+          "lon": 37.61
+        },
+        "radius_m": 1000,
+        "cuisines": [
+          "японская"
+        ],
+        "max_price_rub": 1500
+      }
+    }
+  ],
+  "candidates": [
+    {
+      "id": "example-only",
+      "name": "Пример структуры, не реальное кафе",
+      "address": "Пример адреса",
+      "coordinates": {
+        "lat": 55.75,
+        "lon": 37.61
+      },
+      "cuisines": [
+        "японская"
+      ],
+      "average_price_rub": 1000,
+      "opening_windows": [
+        {
+          "start": "2026-11-01T13:00:00+03:00",
+          "end": "2026-11-01T15:00:00+03:00"
+        }
+      ],
+      "website": "https://example.com",
+      "menu_url": "https://example.com/menu",
+      "menu_with_prices": true,
+      "relevance": 1.0,
+      "load": [
+        {
+          "start": "2026-11-01T13:00:00+03:00",
+          "end": "2026-11-01T15:00:00+03:00",
+          "value": 0.25
+        }
+      ],
+      "events": [],
+      "demo": true
+    }
+  ]
+}

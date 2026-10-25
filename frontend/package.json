@@ -1,0 +1,28 @@
+{
+  "name": "gastro-slots",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite --host 0.0.0.0",
+    "build": "vite build",
+    "test": "vitest run",
+    "demo": "vite --host 0.0.0.0 --mode presentation",
+    "build:presentation": "vite build --mode presentation"
+  },
+  "dependencies": {
+    "leaflet": "^1.9.4",
+    "pinia": "^3.0.1",
+    "vue": "^3.5.13"
+  },
+  "devDependencies": {
+    "@tailwindcss/postcss": "^4.3.3",
+    "@vitejs/plugin-vue": "^6.0.10",
+    "autoprefixer": "^10.4.21",
+    "postcss": "^8.5.3",
+    "prettier": "^3.9.10",
+    "tailwindcss": "^4.3.3",
+    "vite": "^8.3.5",
+    "vitest": "^5.0.5"
+  }
+}

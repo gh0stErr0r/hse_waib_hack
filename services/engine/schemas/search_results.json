@@ -1,0 +1,153 @@
+{
+  "type": "object",
+  "properties": {
+    "places": {
+      "type": "array",
+      "maxItems": 12,
+      "items": {
+        "type": "object",
+        "properties": {
+          "slot_id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "address": {
+            "type": "string"
+          },
+          "cuisines": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "average_price_rub": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "opening_windows": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "start": {
+                  "type": "string"
+                },
+                "end": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "start",
+                "end"
+              ]
+            }
+          },
+          "website": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "menu_url": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "menu_with_prices": {
+            "type": "boolean"
+          },
+          "events": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "title": {
+                  "type": "string"
+                },
+                "start": {
+                  "type": "string"
+                },
+                "end": {
+                  "type": "string"
+                },
+                "interests": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "url": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                }
+              },
+              "required": [
+                "title",
+                "start",
+                "end",
+                "interests",
+                "url"
+              ]
+            }
+          },
+          "evidence": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "field": {
+                  "type": "string",
+                  "enum": [
+                    "identity",
+                    "cuisines",
+                    "average_price_rub",
+                    "opening_windows",
+                    "website",
+                    "menu_url",
+                    "menu_with_prices",
+                    "events"
+                  ]
+                },
+                "source_index": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "quote": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "field",
+                "source_index",
+                "quote"
+              ]
+            }
+          }
+        },
+        "required": [
+          "slot_id",
+          "name",
+          "address",
+          "cuisines",
+          "average_price_rub",
+          "opening_windows",
+          "website",
+          "menu_url",
+          "menu_with_prices",
+          "events",
+          "evidence"
+        ]
+      }
+    }
+  },
+  "required": [
+    "places"
+  ]
+}

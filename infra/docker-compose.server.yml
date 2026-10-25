@@ -1,0 +1,157 @@
+services:
+  traefik:
+    image: traefik:v3.2
+    container_name: hackathon-traefik
+    environment:
+      DOCKER_API_VERSION: "1.41"
+    command:
+      - --api.dashboard=true
+      - --api.insecure=true
+      - --providers.docker=true
+      - --providers.docker.exposedbydefault=false
+      - --entrypoints.web.address=:80
+      - --entrypoints.websecure.address=:443
+      - --log.level=INFO
+    ports:
+      - "80:80"
+      - "443:443"
+      - "8088:8080"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    networks:
+      - hackathon
+
+  nats:
+    image: nats:2.10.27
+    container_name: hackathon-nats
+    command: ["-js", "-m", "8222"]
+    ports:
+      - "4222:4222"
+      - "8222:8222"
+    networks:
+      - hackathon
+
+  redis:
+    image: redis:7-alpine
+    container_name: hackathon-redis
+    ports:
+      - "6379:6379"
+    networks:
+      - hackathon
+
+  postgres:
+    image: postgres:16-alpine
+    container_name: hackathon-postgres
+    environment:
+      POSTGRES_DB: users
+      POSTGRES_USER: ghost
+      POSTGRES_PASSWORD: strongPassword
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - hackathon
+
+  lgtm:
+    image: grafana/otel-lgtm:latest
+    ports:
+      - "3000:3000"
+      - "127.0.0.1:4317:4317"
+      - "127.0.0.1:4318:4318"
+    volumes:
+      - lgtm_data:/data
+    networks:
+      - hackathon
+
+  alloy:
+    image: grafana/alloy:latest
+    command: ["run", "--storage.path=/var/lib/alloy/data", "/etc/alloy/config.alloy"]
+    volumes:
+      - ./monitoring/config.alloy:/etc/alloy/config.alloy:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - alloy_data:/var/lib/alloy/data
+    environment:
+      COMPOSE_PROJECT: ${COMPOSE_PROJECT_NAME:-infra}
+    depends_on:
+      - lgtm
+    networks:
+      - hackathon
+
+  agent:
+    image: ${AGENT_IMAGE:?Set AGENT_IMAGE to its GitLab registry image}
+    pull_policy: always
+    container_name: hackathon-agent
+    environment:
+      AGENT_PORT: "50051"
+    ports:
+      - "50051:50051"
+    networks:
+      - hackathon
+
+  notif:
+    restart: on-failure
+    image: ${NOTIF_IMAGE:?Set NOTIF_IMAGE to its GitLab registry image}
+    pull_policy: always
+    container_name: hackathon-notif
+    environment:
+      NATS_URL: "nats://nats:4222"
+      SMTP_USER: ${SMTP_USER:-}
+      SMTP_PASSWORD: ${SMTP_PASSWORD:-}
+    depends_on:
+      - nats
+    networks:
+      - hackathon
+
+  auth:
+    restart: on-failure
+    image: ${AUTH_IMAGE:?Set AUTH_IMAGE to its GitLab registry image}
+    pull_policy: always
+    container_name: hackathon-auth
+    environment:
+      PORT: "8080"
+      JWT_PUBLIC_KEY: ${JWT_PUBLIC_KEY:-}
+      JWT_PRIVATE_KEY: ${JWT_PRIVATE_KEY:-}
+      REDISURL: "redis://redis:6379/0"
+      NATS: "nats://nats:4222"
+      POSTGRES: "host=postgres port=5432 user=ghost password=strongPassword dbname=users sslmode=disable"
+    depends_on:
+      - postgres
+      - redis
+      - nats
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.auth.rule=Host(`localhost`) && PathPrefix(`/api/auth` )"
+      - "traefik.http.services.auth.loadbalancer.server.port=8080"
+    networks:
+      - hackathon
+
+  core:
+    restart: on-failure
+    image: ${CORE_IMAGE:?Set CORE_IMAGE to its GitLab registry image}
+    pull_policy: always
+    container_name: hackathon-core
+    environment:
+      PORT: "8081"
+      AUTH_URL: "http://auth:8080"
+      AGENT_HOST: "agent"
+      AGENT_PORT: "50051"
+    depends_on:
+      - agent
+      - auth
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.core.rule=Host(`localhost`) && PathPrefix(`/api/core` )"
+      - "traefik.http.services.core.loadbalancer.server.port=8081"
+    networks:
+      - hackathon
+
+
+volumes:
+  postgres_data:
+  lgtm_data:
+  alloy_data:
+
+networks:
+  hackathon:
+    driver: bridge

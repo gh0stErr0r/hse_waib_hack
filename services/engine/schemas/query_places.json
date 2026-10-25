@@ -1,0 +1,87 @@
+{
+  "name": "query_places",
+  "description": "Extract and merge dining preferences from the conversation. Only user-provided values. All times must have a concrete date, numeric UTC offset and IANA timezone. Ask for missing date/timezone instead of guessing. Slots may have different cuisine/budget/event requirements. Keep existing slots unless user changes them.",
+  "parameters": {
+    "type": "object",
+    "properties": {
+      "location": {
+        "type": "string",
+        "description": "City, district or metro station"
+      },
+      "cuisines": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        },
+        "description": "Canonical Russian cuisine names; empty means any"
+      },
+      "max_price_rub": {
+        "type": "integer",
+        "description": "Maximum average bill per person in RUB; 0 means user explicitly has no limit"
+      },
+      "requires_event": {
+        "type": "boolean"
+      },
+      "interests": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        }
+      },
+      "slots": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string"
+            },
+            "label": {
+              "type": "string"
+            },
+            "start": {
+              "type": "string",
+              "description": "RFC3339 datetime with offset"
+            },
+            "end": {
+              "type": "string",
+              "description": "RFC3339 datetime with offset"
+            },
+            "timezone": {
+              "type": "string",
+              "description": "IANA timezone"
+            },
+            "requires_event": {
+              "type": "boolean"
+            },
+            "interests": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "radius_m": {
+              "type": "number"
+            },
+            "cuisines": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "max_price_rub": {
+              "type": "integer"
+            }
+          },
+          "required": [
+            "id",
+            "label",
+            "start",
+            "end",
+            "timezone"
+          ]
+        }
+      }
+    }
+  }
+}

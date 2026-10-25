@@ -1,0 +1,93 @@
+name: gastro
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: users
+      POSTGRES_USER: gastro
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in infra/.env}
+    volumes: [gastro_data:/var/lib/postgresql/data]
+    healthcheck:
+      test: [CMD-SHELL, pg_isready -U gastro -d users]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    restart: unless-stopped
+  redis:
+    image: redis:7-alpine
+    command: [redis-server, --appendonly, "yes"]
+    volumes: [gastro_redis:/data]
+    restart: unless-stopped
+  nats:
+    image: nats:2.10-alpine
+    command: [-js, -sd, /data]
+    volumes: [gastro_nats:/data]
+    restart: unless-stopped
+  auth:
+    build: ../backend/auth
+    environment:
+      PORT: "8080"
+      POSTGRES: host=postgres port=5432 user=gastro password=${POSTGRES_PASSWORD} dbname=users sslmode=disable
+      REDISURL: redis://redis:6379/0
+      NATS: nats://nats:4222
+      JWT_PUBLIC_KEY: ${JWT_PUBLIC_KEY:-}
+      JWT_PRIVATE_KEY: ${JWT_PRIVATE_KEY:-}
+      PEPPER: ${PEPPER:-}
+    depends_on:
+      postgres: { condition: service_healthy }
+      redis: { condition: service_started }
+      nats: { condition: service_started }
+    restart: unless-stopped
+  notif:
+    build: ../backend/notif
+    environment:
+      NATS_URL: nats://nats:4222
+      SMTP_USER: ${SMTP_USER:-}
+      SMTP_PASSWORD: ${SMTP_PASSWORD:-}
+      SMTP_NETWORK: ${SMTP_NETWORK:-tcp}
+      SMTP_TIMEOUT: ${SMTP_TIMEOUT:-20s}
+    depends_on: [nats]
+    restart: unless-stopped
+  engine:
+    build: ../services/engine
+    environment:
+      DATABASE_URL: postgres://gastro:${POSTGRES_PASSWORD}@postgres/users
+      AUTH_URL: http://auth:8080
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      GEMINI_MODEL: ${GEMINI_MODEL:-gemini-3.8-flash}
+      GEMINI_API_MODE: ${GEMINI_API_MODE:-interactions}
+      GEMINI_API_BASE_URL: ${GEMINI_API_BASE_URL:-https://generativelanguage.googleapis.com/v1beta}
+      PLACES_PROVIDER: ${PLACES_PROVIDER:-gemini}
+      GEOCODER_URL: ${GEOCODER_URL:-https://photon.komoot.io/api/}
+      YANDEX_SEARCH_KEY: ${YANDEX_SEARCH_KEY:-}
+      YANDEX_GEOCODER_KEY: ${YANDEX_GEOCODER_KEY:-}
+      DEMO_PLACES: ${DEMO_PLACES:-false}
+      PLACE_ENRICHMENT_URL: ${PLACE_ENRICHMENT_URL:-}
+      PLACE_ENRICHMENT_TOKEN: ${PLACE_ENRICHMENT_TOKEN:-}
+    depends_on:
+      postgres: { condition: service_healthy }
+      auth: { condition: service_started }
+    restart: unless-stopped
+  gateway:
+    build: ../services/gateway
+    environment:
+      CORE_URL: http://engine:8082
+      ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-http://localhost:8088}
+    depends_on: [engine]
+    restart: unless-stopped
+  frontend:
+    build:
+      context: ../frontend
+      target: production
+      args:
+        VITE_MAP_ATTRIBUTION: ${VITE_MAP_ATTRIBUTION:-}
+        VITE_MAP_PROVIDER: ${VITE_MAP_PROVIDER:-osm}
+        VITE_MAP_TILES_URL: ${VITE_MAP_TILES_URL:-https://tile.openstreetmap.org/{z}/{x}/{y}.png}
+        VITE_YANDEX_MAPS_KEY: ${VITE_YANDEX_MAPS_KEY:-}
+    ports: ["127.0.0.1:8088:80"]
+    depends_on: [gateway, auth]
+    restart: unless-stopped
+volumes:
+  gastro_data:
+  gastro_redis:
+  gastro_nats:

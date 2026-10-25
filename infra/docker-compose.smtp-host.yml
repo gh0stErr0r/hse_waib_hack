@@ -1,0 +1,10 @@
+# Optional Linux override. Selected by scripts/compose.sh when SMTP_HOST_NETWORK=true.
+# notif needs the host's IPv6 route; NATS is exposed only on host loopback.
+services:
+  nats:
+    ports:
+      - "127.0.0.1:${SMTP_NATS_HOST_PORT:-14222}:4222"
+  notif:
+    network_mode: host
+    environment:
+      NATS_URL: nats://127.0.0.1:${SMTP_NATS_HOST_PORT:-14222}
