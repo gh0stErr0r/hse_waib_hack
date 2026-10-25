@@ -1,0 +1,14 @@
+# Optional resolver override; preserve Docker service discovery for nats/auth/etc.
+# Enable through APP_CUSTOM_DNS=true in infra/.env or the process environment.
+x-external-dns: &external-dns
+  dns:
+    - ${APP_DNS_PRIMARY:-1.1.1.1}
+    - ${APP_DNS_SECONDARY:-8.8.8.8}
+  dns_opt:
+    - timeout:2
+    - attempts:2
+services:
+  engine:
+    <<: *external-dns
+  notif:
+    <<: *external-dns

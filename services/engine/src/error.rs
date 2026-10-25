@@ -21,6 +21,9 @@ impl ApiError {
 }
 impl IntoResponse for ApiError {
     fn into_response(self) -> Response {
+        if self.0.is_server_error() {
+            tracing::warn!(http_status=self.0.as_u16(),reason=%self.1,"request failed");
+        }
         (
             self.0,
             Json(serde_json::json!({"type":"error","text":self.1})),

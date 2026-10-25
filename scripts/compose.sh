@@ -2,6 +2,26 @@
 set -euo pipefail
 project_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$project_root"
+# Read only named boolean flags; never source the secrets file as shell code.
+env_flag_enabled() {
+  local key="$1" value line pattern enabled=false
+  value="$(printenv "$key" 2>/dev/null || true)"
+  if [[ -n "$value" ]]; then
+    if [[ "$value" == true ]]; then return 0; else return 1; fi
+  fi
+  pattern="^[[:space:]]*${key}[[:space:]]*=[[:space:]]*(true|false|\"true\"|\"false\"|'true'|'false')[[:space:]]*(#.*)?$"
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    line="${line%$'\r'}"
+    if [[ "$line" =~ $pattern ]]; then
+      case "${BASH_REMATCH[1]}" in
+        true|\"true\"|\'true\') enabled=true ;;
+        *) enabled=false ;;
+      esac
+    fi
+  done < infra/.env
+  [[ "$enabled" == true ]]
+}
+
 stack=app
 if [[ "${1:-}" == presentation || "${1:-}" == app ]]; then
   stack="$1"
@@ -27,17 +47,11 @@ else
     exit 1
   fi
   options=(--env-file infra/.env -f infra/docker-compose.gastro.yml)
-  smtp_host_network="${SMTP_HOST_NETWORK:-}"
-  if [[ -z "$smtp_host_network" ]]; then
-    while IFS= read -r line || [[ -n "$line" ]]; do
-      line="${line%$'\r'}"
-      case "$line" in
-        SMTP_HOST_NETWORK=true|SMTP_HOST_NETWORK=\"true\"|SMTP_HOST_NETWORK=\'true\') smtp_host_network=true ;;
-      esac
-    done < infra/.env
-  fi
-  if [[ "$smtp_host_network" == true ]]; then
+  if env_flag_enabled SMTP_HOST_NETWORK; then
     options+=(-f infra/docker-compose.smtp-host.yml)
+  fi
+  if env_flag_enabled APP_CUSTOM_DNS; then
+    options+=(-f infra/docker-compose.dns.yml)
   fi
 
 fi

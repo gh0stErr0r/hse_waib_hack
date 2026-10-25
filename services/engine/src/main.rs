@@ -8,6 +8,7 @@ mod providers;
 mod ranking;
 #[cfg(test)]
 mod tests;
+mod upstream;
 mod web_search;
 use axum::{
     Json, Router,
@@ -53,14 +54,27 @@ async fn identify(app: &App, headers: &HeaderMap) -> Result<Owner, ApiError> {
         .timeout(Duration::from_secs(5))
         .send()
         .await
-        .map_err(|_| ApiError::upstream())?;
+        .map_err(|e| crate::upstream::transport("Auth", "validate_session", e))?;
     if res.status() == StatusCode::UNAUTHORIZED || res.status() == StatusCode::FORBIDDEN {
         return Err(ApiError::new(401, "Сессия истекла или отозвана"));
     }
+    let status = res.status().as_u16();
     if !res.status().is_success() {
-        return Err(ApiError::upstream());
+        tracing::error!(
+            provider = "Auth",
+            operation = "validate_session",
+            http_status = status,
+            "auth request failed"
+        );
+        return Err(ApiError::new(
+            502,
+            format!("Auth: сервис авторизации вернул HTTP {status}."),
+        ));
     }
-    let v: Value = res.json().await.map_err(|_| ApiError::upstream())?;
+    let v: Value = res
+        .json()
+        .await
+        .map_err(|e| crate::upstream::json("Auth", "validate_session", status, e))?;
     if v.get("status").and_then(Value::as_str) != Some("active") {
         return Err(ApiError::new(403, "Аккаунт неактивен"));
     }
@@ -182,13 +196,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| "info".into()),
         )
         .init();
+    let client = reqwest::Client::builder()
+        .connect_timeout(Duration::from_secs(5))
+        .timeout(Duration::from_secs(40))
+        .redirect(reqwest::redirect::Policy::none())
+        .build()?;
+    if std::env::args().any(|arg| arg == "--check-upstreams") {
+        let ok = crate::upstream::check(&client).await;
+        std::process::exit(if ok { 0 } else { 1 });
+    }
     let app = Arc::new(App {
         db: db::init(&std::env::var("DATABASE_URL")?)?,
-        client: reqwest::Client::builder()
-            .connect_timeout(Duration::from_secs(5))
-            .timeout(Duration::from_secs(40))
-            .redirect(reqwest::redirect::Policy::none())
-            .build()?,
+        client,
         auth_url: std::env::var("AUTH_URL")
             .unwrap_or("http://auth:8080".into())
             .trim_end_matches('/')

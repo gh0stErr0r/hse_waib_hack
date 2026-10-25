@@ -46,6 +46,9 @@ services:
       SMTP_PASSWORD: ${SMTP_PASSWORD:-}
       SMTP_NETWORK: ${SMTP_NETWORK:-tcp}
       SMTP_TIMEOUT: ${SMTP_TIMEOUT:-20s}
+      SMTP_HOST: ${SMTP_HOST:-}
+      SMTP_PORT: ${SMTP_PORT:-}
+      SMTP_SECURITY: ${SMTP_SECURITY:-starttls}
     depends_on: [nats]
     restart: unless-stopped
   engine:

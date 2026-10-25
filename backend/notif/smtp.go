@@ -10,14 +10,15 @@ import (
 	"net/mail"
 	"net/smtp"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 )
 
 type smtpSettings struct {
-	host, port, username, password, network string
-	timeout                                 time.Duration
-	tlsConfig                               *tls.Config
+	host, port, username, password, network, security string
+	timeout                                           time.Duration
+	tlsConfig                                         *tls.Config
 }
 
 func smtpSettingsFromEnv(provider string) (smtpSettings, error) {
@@ -38,7 +39,21 @@ func smtpSettingsFromEnv(provider string) (smtpSettings, error) {
 	if err != nil || timeout < time.Second || timeout > time.Minute {
 		return smtpSettings{}, errors.New("SMTP_TIMEOUT must be between 1s and 1m")
 	}
-	return smtpSettings{host: host, port: "587", username: strings.TrimSpace(os.Getenv("SMTP_USER")), password: os.Getenv("SMTP_PASSWORD"), network: network, timeout: timeout}, nil
+	security := envOrDefault("SMTP_SECURITY", "starttls")
+	if security != "starttls" && security != "tls" {
+		return smtpSettings{}, errors.New("SMTP_SECURITY must be starttls or tls")
+	}
+	defaultPort := "587"
+	if security == "tls" {
+		defaultPort = "465"
+	}
+	port := envOrDefault("SMTP_PORT", defaultPort)
+	number, err := strconv.Atoi(port)
+	if err != nil || number < 1 || number > 65535 {
+		return smtpSettings{}, errors.New("SMTP_PORT must be between 1 and 65535")
+	}
+	host = envOrDefault("SMTP_HOST", host)
+	return smtpSettings{host: host, port: port, username: strings.TrimSpace(os.Getenv("SMTP_USER")), password: os.Getenv("SMTP_PASSWORD"), network: network, security: security, timeout: timeout}, nil
 }
 
 func openSMTP(settings smtpSettings) (*smtp.Client, error) {
@@ -51,6 +66,18 @@ func openSMTP(settings smtpSettings) (*smtp.Client, error) {
 		return nil, fmt.Errorf("SMTP connect (%s): %w", settings.network, err)
 	}
 	_ = conn.SetDeadline(time.Now().Add(settings.timeout))
+	config := settings.tlsConfig
+	if config == nil {
+		config = &tls.Config{ServerName: settings.host, MinVersion: tls.VersionTLS12}
+	}
+	if settings.security == "tls" {
+		secured := tls.Client(conn, config)
+		if err = secured.Handshake(); err != nil {
+			_ = conn.Close()
+			return nil, fmt.Errorf("SMTP TLS: %w", err)
+		}
+		conn = secured
+	}
 	client, err := smtp.NewClient(conn, settings.host)
 	if err != nil {
 		_ = conn.Close()
@@ -63,16 +90,15 @@ func openSMTP(settings smtpSettings) (*smtp.Client, error) {
 	if err = client.Hello("localhost"); err != nil {
 		return fail("EHLO", err)
 	}
-	if ok, _ := client.Extension("STARTTLS"); !ok {
-		return fail("STARTTLS", errors.New("server does not support required TLS"))
+	if settings.security != "tls" {
+		if ok, _ := client.Extension("STARTTLS"); !ok {
+			return fail("STARTTLS", errors.New("server does not support required TLS"))
+		}
+		if err = client.StartTLS(config); err != nil {
+			return fail("STARTTLS", err)
+		}
 	}
-	config := settings.tlsConfig
-	if config == nil {
-		config = &tls.Config{ServerName: settings.host, MinVersion: tls.VersionTLS12}
-	}
-	if err = client.StartTLS(config); err != nil {
-		return fail("STARTTLS", err)
-	}
+
 	if err = client.Auth(smtp.PlainAuth("", settings.username, settings.password, settings.host)); err != nil {
 		return fail("authentication", err)
 	}
@@ -134,6 +160,6 @@ func checkSMTP() error {
 	}
 	defer client.Close()
 	_ = client.Quit()
-	fmt.Printf("SMTP verified TLS and authentication: OK (%s:%s, %s). No email sent.\n", settings.host, settings.port, settings.network)
+	fmt.Printf("SMTP verified TLS and authentication: OK (%s:%s, %s, %s). No email sent.\n", settings.host, settings.port, settings.network, envOrDefault("SMTP_SECURITY", "starttls"))
 	return nil
 }

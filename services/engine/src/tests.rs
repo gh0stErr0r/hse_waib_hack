@@ -559,3 +559,79 @@ fn slot_specific_preferences_skip_already_answered_questions() {
     p.merge(serde_json::json!({"location":"Москва","slots":[{"id":"lunch","cuisines":["японская"],"max_price_rub":1500,"requires_event":false}]})).unwrap();
     assert!(p.question().is_none());
 }
+
+#[tokio::test]
+async fn upstream_dns_failure_is_explicit_and_does_not_expose_url_secrets() {
+    use reqwest::dns::{Name, Resolve, Resolving};
+    #[derive(Debug)]
+    struct BrokenDns;
+    impl Resolve for BrokenDns {
+        fn resolve(&self, _: Name) -> Resolving {
+            Box::pin(async { Err(std::io::Error::other("dns error: server misbehaving").into()) })
+        }
+    }
+    let client = reqwest::Client::builder()
+        .no_proxy()
+        .dns_resolver(std::sync::Arc::new(BrokenDns))
+        .build()
+        .unwrap();
+    let error = client
+        .get("http://provider.invalid/check?key=private-test-key")
+        .send()
+        .await
+        .unwrap_err();
+    let response = crate::upstream::transport("Gemini", "test_dns", error);
+    assert_eq!(response.0, axum::http::StatusCode::BAD_GATEWAY);
+    assert!(response.1.contains("DNS"));
+    assert!(!response.1.contains("private-test-key"));
+}
+#[tokio::test]
+async fn upstream_timeout_and_non_json_responses_keep_distinct_causes() {
+    use axum::{Router, routing::get};
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let app = Router::new()
+        .route(
+            "/slow",
+            get(|| async {
+                tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+                "done"
+            }),
+        )
+        .route(
+            "/html",
+            get(|| async { "<html>private proxy payload</html>" }),
+        );
+    let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+    let client = reqwest::Client::builder().no_proxy().build().unwrap();
+    let error = client
+        .get(format!("http://{address}/slow"))
+        .timeout(std::time::Duration::from_millis(10))
+        .send()
+        .await
+        .unwrap_err();
+    let response = crate::upstream::transport("Gemini", "test_timeout", error);
+    assert_eq!(response.0, axum::http::StatusCode::GATEWAY_TIMEOUT);
+    assert!(response.1.contains("время ожидания"));
+    let body_timeout = client
+        .get(format!("http://{address}/slow"))
+        .timeout(std::time::Duration::from_millis(10))
+        .send()
+        .await
+        .unwrap_err();
+    let response = crate::upstream::json("Gemini", "test_body_timeout", 200, body_timeout);
+    assert_eq!(response.0, axum::http::StatusCode::GATEWAY_TIMEOUT);
+
+    let error = client
+        .get(format!("http://{address}/html"))
+        .send()
+        .await
+        .unwrap()
+        .json::<serde_json::Value>()
+        .await
+        .unwrap_err();
+    let response = crate::upstream::json("Photon", "test_json", 403, error);
+    assert!(response.1.contains("403"));
+    assert!(!response.1.contains("private proxy payload"));
+    server.abort();
+}

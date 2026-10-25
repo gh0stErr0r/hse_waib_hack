@@ -92,6 +92,36 @@ bash scripts/compose.sh app exec -T notif ./notif --check-smtp
 
 Проверка не отправляет письмо и не выводит пароль. SMTP-соединение имеет ограничение времени; ошибки указывают этап: соединение, приветствие, TLS, авторизация или принятие письма. Успех означает принятие сообщения SMTP-сервером, а не гарантию попадания во входящие. Закрытие соединения после успешного принятия сообщения не считается ошибкой отправки.
 
+## Если письма не отправляются на Mac
+
+При ошибке `dial tcp6 ... no such host` сначала уберите перенесённое с Linux принудительное использование IPv6. В `infra/.env` на Mac:
+
+```dotenv
+SMTP_HOST_NETWORK=false
+SMTP_NETWORK=tcp4
+SMTP_TIMEOUT=20s
+SMTP_SECURITY=starttls
+SMTP_PORT=587
+```
+
+Примените переменные пересозданием контейнера, затем проверьте TLS и авторизацию без отправки письма:
+
+```bash
+bash scripts/compose.sh app up -d --no-deps --force-recreate notif
+bash scripts/compose.sh app exec -T notif ./notif --check-smtp
+```
+
+Обычный `restart` не обновляет переменные контейнера. Если получаете `SMTP greeting`/`connect` с таймаутом, это сетевой сбой до проверки пароля; проверьте доступ из Docker Desktop, VPN и firewall. Если `SMTP authentication` возвращает 535, проверьте Gmail-адрес отправителя и пароль приложения без пробелов.
+
+В обновлённом коде также поддержан Gmail с немедленным TLS на 465. Если порт 587 недоступен, после обновления исходников и пересборки notif можно отдельно проверить другой порт без изменения настроек и отправки письма:
+
+```bash
+bash scripts/compose.sh app up --build -d --no-deps notif
+bash scripts/compose.sh app exec -T -e SMTP_PORT=465 -e SMTP_SECURITY=tls notif ./notif --check-smtp
+```
+
+При успешной проверке сохраните `SMTP_PORT=465` и `SMTP_SECURITY=tls` в `infra/.env` и пересоздайте notif. Оба режима требуют проверенный TLS, шифрование и проверка сертификата не отключаются. При `no such host` даже с `tcp4` проверяйте DNS Docker Desktop; [официальные настройки сети и DNS](https://docs.docker.com/desktop/features/networking/).
+
 ## Если сборка gateway зависает на установке Hex
 
 Ошибка `mix local.hex` при загрузке `builds.hex.pm/installs/hex.csv` означает сетевой таймаут установщика. Dockerfile gateway скачивает закреплённые исходники Hex 2.6.0 и Rebar 3.25.1 с официального GitHub: загрузка выполняется через curl с повторами и проверкой SHA-512, а успешные загрузки сохраняются в кеше BuildKit. Hex компилируется внутри образа тем же Elixir/OTP, что и gateway, чтобы избежать несовместимости готовых BEAM-архивов с обновлениями OTP. Для зависимостей установлен таймаут 180 секунд и параллелизм 2, предусмотрены повторные попытки.
@@ -111,6 +141,37 @@ docker compose --env-file infra/.env -f infra/docker-compose.gastro.yml up -d --
 ```
 
 При первой сборке нужен доступ к `repo.hex.pm` и GitHub. TLS-проверка и контрольные суммы включены. Для доверенного зеркала того же архива можно передать `--build-arg HEX_SOURCE_URL=...` или `--build-arg REBAR3_ARCHIVE_URL=...`; контрольная сумма остаётся обязательной. На macOS используйте обычные `SMTP_HOST_NETWORK=false` и `SMTP_NETWORK=tcp`; отдельный SMTP-обход через host network выше предназначен для нашего Linux-окружения.
+
+## Диагностика 502 и 504 в engine
+
+Строка `tower_http::trace::on_failure` показывает HTTP-статус и общее время запроса. Она сама по себе не указывает, отказали Auth, Gemini или Photon. В обновлённом ядре дополнительно логируются `provider`, `operation`, признаки DNS/таймаута и статус провайдера. API-ключи, токены и тексты диалога не выводятся.
+
+После обновления исходников пересоберите только ядро и запустите проверку:
+
+```bash
+bash scripts/compose.sh app up --build -d --no-deps engine
+bash scripts/compose.sh app exec -T engine gastro-engine --check-upstreams
+```
+
+Проверка обращается к Auth, Gemini и Photon тем же HTTP-клиентом, что и приложение. В Gemini ключ не передаётся: HTTP 400/401/403/429 означает, что HTTP-ответ получен, и не подтверждает доступ к модели или квоту. Генерация не запускается. Диагностика также не требует подключения ядра к PostgreSQL.
+
+Если DNS в контейнере работает, но запрос заканчивается по времени, проверяйте доступ HTTPS из Docker Desktop, VPN, прокси и фильтрацию сети. Таймауты Gemini составляют 40 секунд для разбора/извлечения и 70 секунд для Google Search; Photon — 8 секунд. В обновлённом API таймаут возвращает 504, ошибка DNS и некорректный ответ — 502 с названием провайдера.
+
+Для ошибки DNS `server misbehaving` у engine или notif есть отдельная конфигурация. В `infra/.env` можно включить доступные в вашей сети DNS-серверы:
+
+```dotenv
+APP_CUSTOM_DNS=true
+APP_DNS_PRIMARY=1.1.1.1
+APP_DNS_SECONDARY=8.8.8.8
+```
+
+Обёртка автоматически подключит `infra/docker-compose.dns.yml` только для engine и notif. Пересоздайте их:
+
+```bash
+bash scripts/compose.sh app up -d --no-deps --force-recreate engine notif
+```
+
+При VPN или корпоративной сети укажите разрешённые вашей сетью резолверы; публичные DNS тоже могут быть недоступны. Это настройка по запросу, по умолчанию используется DNS Docker. Внутренние имена сервисов Docker сохраняются. Не заменяйте smtp.gmail.com или API-домены постоянными IP-адресами: адреса меняются, проверка TLS выполняется по имени.
 
 ## Если Gemini не отвечает
 

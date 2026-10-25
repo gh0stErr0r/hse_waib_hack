@@ -59,24 +59,29 @@ pub async fn geocode(
     if let Some(center) = bias {
         request = request.query(&[("lat", center.lat), ("lon", center.lon)]);
     }
-    let response = request.send().await.map_err(|_| {
-        ApiError::new(
-            502,
-            "Геокодер временно недоступен. Уточните адрес или повторите запрос позже.",
-        )
-    })?;
+    let response = request
+        .send()
+        .await
+        .map_err(|e| crate::upstream::transport("Photon", "geocode", e))?;
     if response.status().as_u16() == 429 {
+        tracing::warn!(
+            provider = "Photon",
+            operation = "geocode",
+            http_status = 429,
+            "geocoder rate limited"
+        );
         return Err(ApiError::new(
             503,
             "Геокодер ограничил частоту запросов. Повторите позже.",
         ));
     }
+    let status = response.status().as_u16();
     let value: Value = response
         .error_for_status()
-        .map_err(|_| ApiError::upstream())?
+        .map_err(|e| crate::upstream::transport("Photon", "geocode", e))?
         .json()
         .await
-        .map_err(|_| ApiError::upstream())?;
+        .map_err(|e| crate::upstream::json("Photon", "geocode", status, e))?;
     if bias.is_some()
         && value
             .pointer("/features/0/properties/type")

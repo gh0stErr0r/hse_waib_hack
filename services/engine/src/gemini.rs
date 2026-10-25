@@ -10,6 +10,14 @@ pub enum Mode {
     Structured,
 }
 
+fn operation(mode: Mode) -> &'static str {
+    match mode {
+        Mode::Function => "extract_preferences",
+        Mode::Search => "google_search",
+        Mode::Structured => "extract_search_results",
+    }
+}
+
 pub async fn request(
     client: &reqwest::Client,
     mode: Mode,
@@ -46,19 +54,34 @@ pub async fn request(
         .timeout(Duration::from_secs(timeout))
         .send()
         .await
-        .map_err(|_| {
-            ApiError::new(
-                502,
-                "Не удалось связаться с Gemini. Проверьте доступность API с сервера.",
-            )
-        })?;
+        .map_err(|e| crate::upstream::transport("Gemini", operation(mode), e))?;
     let status = response.status();
     let body: Value = response
         .json()
         .await
-        .map_err(|_| ApiError::new(502, "Gemini вернул некорректный ответ"))?;
+        .map_err(|e| crate::upstream::json("Gemini", operation(mode), status.as_u16(), e))?;
     if !status.is_success() {
-        return Err(provider_error(status.as_u16(), &body));
+        let error = provider_error(status.as_u16(), &body);
+        let provider_status = body
+            .pointer("/error/status")
+            .and_then(Value::as_str)
+            .filter(|s| {
+                matches!(
+                    *s,
+                    "INVALID_ARGUMENT"
+                        | "FAILED_PRECONDITION"
+                        | "UNAUTHENTICATED"
+                        | "PERMISSION_DENIED"
+                        | "NOT_FOUND"
+                        | "RESOURCE_EXHAUSTED"
+                        | "UNAVAILABLE"
+                        | "INTERNAL"
+                        | "DEADLINE_EXCEEDED"
+                )
+            })
+            .unwrap_or("UNKNOWN");
+        tracing::error!(provider="Gemini",operation=operation(mode),http_status=status.as_u16(),provider_status,reason=%error.1,"Gemini rejected request");
+        return Err(error);
     }
     if body
         .get("status")

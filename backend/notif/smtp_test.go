@@ -13,6 +13,10 @@ import (
 )
 
 func localSMTP(t *testing.T) (smtpSettings, <-chan string, <-chan error) {
+	return localSMTPMode(t, false)
+}
+
+func localSMTPMode(t *testing.T, implicitTLS bool) (smtpSettings, <-chan string, <-chan error) {
 	t.Helper()
 	sample := httptest.NewTLSServer(nil)
 	certificate := sample.TLS.Certificates[0]
@@ -33,6 +37,14 @@ func localSMTP(t *testing.T) (smtpSettings, <-chan string, <-chan error) {
 		}
 		defer conn.Close()
 		_ = conn.SetDeadline(time.Now().Add(3 * time.Second))
+		if implicitTLS {
+			secured := tls.Server(conn, &tls.Config{Certificates: []tls.Certificate{certificate}, MinVersion: tls.VersionTLS12})
+			if err = secured.Handshake(); err != nil {
+				done <- err
+				return
+			}
+			conn = secured
+		}
 		reader := bufio.NewReader(conn)
 		if _, err = fmt.Fprint(conn, "220 localhost SMTP ready\r\n"); err != nil {
 			done <- err
@@ -103,7 +115,11 @@ func localSMTP(t *testing.T) (smtpSettings, <-chan string, <-chan error) {
 	}()
 	t.Cleanup(func() { _ = listener.Close() })
 	host, port, _ := net.SplitHostPort(listener.Addr().String())
-	return smtpSettings{host: host, port: port, username: "sender@example.test", password: "test-password", network: "tcp4", timeout: 2 * time.Second, tlsConfig: &tls.Config{ServerName: host, RootCAs: roots, MinVersion: tls.VersionTLS12}}, messages, done
+	security := "starttls"
+	if implicitTLS {
+		security = "tls"
+	}
+	return smtpSettings{security: security, host: host, port: port, username: "sender@example.test", password: "test-password", network: "tcp4", timeout: 2 * time.Second, tlsConfig: &tls.Config{ServerName: host, RootCAs: roots, MinVersion: tls.VersionTLS12}}, messages, done
 }
 
 func TestSMTPAcceptsMessageDespiteQuitEOF(t *testing.T) {
@@ -178,5 +194,53 @@ func TestSMTPNetworkConfiguration(t *testing.T) {
 	t.Setenv("SMTP_NETWORK", "udp")
 	if _, err = smtpSettingsFromEnv("gmail"); err == nil {
 		t.Fatal("invalid network accepted")
+	}
+}
+
+func TestSMTPImplicitTLS(t *testing.T) {
+	settings, messages, done := localSMTPMode(t, true)
+	if err := sendSMTP(settings, "recipient@example.test", "Код подтверждения", "Тест TLS"); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case body := <-messages:
+		if !strings.Contains(body, "Тест TLS") {
+			t.Fatal("missing message")
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("message not received")
+	}
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+}
+func TestSMTPImplicitTLSCertificateVerification(t *testing.T) {
+	settings, _, done := localSMTPMode(t, true)
+	settings.tlsConfig = nil
+	if _, err := openSMTP(settings); err == nil || !strings.Contains(err.Error(), "SMTP TLS") {
+		t.Fatalf("untrusted implicit TLS accepted: %v", err)
+	}
+	<-done
+}
+func TestSMTPTransportConfiguration(t *testing.T) {
+	t.Setenv("SMTP_NETWORK", "tcp")
+	t.Setenv("SMTP_SECURITY", "tls")
+	t.Setenv("SMTP_PORT", "")
+	t.Setenv("SMTP_HOST", "")
+	settings, err := smtpSettingsFromEnv("gmail")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if settings.port != "465" || settings.security != "tls" {
+		t.Fatal("implicit TLS defaults not applied")
+	}
+	t.Setenv("SMTP_PORT", "bad")
+	if _, err := smtpSettingsFromEnv("gmail"); err == nil {
+		t.Fatal("invalid SMTP port accepted")
+	}
+	t.Setenv("SMTP_PORT", "587")
+	t.Setenv("SMTP_SECURITY", "none")
+	if _, err := smtpSettingsFromEnv("gmail"); err == nil {
+		t.Fatal("insecure transport accepted")
 	}
 }
